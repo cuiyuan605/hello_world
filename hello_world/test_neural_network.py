@@ -63,7 +63,7 @@ for i in range(1,len(units_bias)-1):
 actfc[len(units)-1] = identy
 #print(actfc)
 
-for k  in range(0,5000):
+for k in range(0,5000):
     a = {0:x}
     z = {0:actfc[0](a[0])}
     for i in range(1,len(units)):

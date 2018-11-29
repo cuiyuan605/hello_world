@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pylab as plt
 import random
 
-class NeuralNetwork(object):
-    def __init__(self, sizes, act, act_derivative, cost_derivative):
+class NeuralNetwork2(object):
+    def __init__(self, sizes, act, act_derivative, cost_derivative,out_act,out_act_derivative):
         #sizes表示神经网络各层的神经元个数，第一层为输入层，最后一层为输出层
         #act为神经元的激活函数
         #act_derivative为激活函数的导数
@@ -17,12 +17,18 @@ class NeuralNetwork(object):
         self.act=act
         self.act_derivative=act_derivative
         self.cost_derivative=cost_derivative
+        self.out_act=out_act
+        self.out_act_derivative=out_act_derivative
 
     #前向反馈（正向传播）
     def feedforward(self, a):
         #逐层计算神经元的激活值，公式(4)
-        for b, w in zip(self.biases, self.weights):
-            a = self.act(np.dot(w, a)+b)
+        for idx,(b, w) in enumerate(zip(self.biases, self.weights)):
+            if idx<len(self.biases)-1:
+                a = self.act(np.dot(w, a)+b)
+            else:
+                #输出层激活函数与其他层不同
+                a = self.out_act(np.dot(w, a)+b)
         return a
 
     #随机梯度下降算法
@@ -61,14 +67,17 @@ class NeuralNetwork(object):
         activations = [x]
         #保存每一层神经元的z值
         zs = []
-        for b, w in zip(self.biases, self.weights):
+        for idx,(b, w) in enumerate(zip(self.biases, self.weights)):
             z = np.dot(w, activation)+b
             zs.append(z)
-            activation = self.act(z)
+            if idx<len(self.biases)-1:
+                activation = self.act(z)
+            else:
+                activation = self.out_act(z)
             activations.append(activation)
         #反向传播得到各个参数的偏导数值
         #公式(13)
-        d = self.cost_derivative(activations[-1], y) * self.act_derivative(zs[-1])
+        d = self.cost_derivative(activations[-1], y) * self.out_act_derivative(zs[-1])
         #公式(17)
         nabla_b[-1] = d
         #公式(14)
@@ -98,20 +107,28 @@ def sigmoid(z):
 def sigmoid_derivative(z):
     return sigmoid(z)*(1-sigmoid(z))
 
+def ouput_layer_func(z):
+    return z
+
+def ouput_layer_func_derivative(z):
+    return z-z+1
+
 if __name__ == "__main__":
     #创建一个5层的全连接神经网络，每层的神经元个数为1，8，5，3，1
     #其中第一层为输入层，最后一层为输出层
-    network=NeuralNetwork([1,16,8,4,1],sigmoid,sigmoid_derivative,distance_derivative)
+    #network=NeuralNetwork2([1,32,16,8,4,1],sigmoid,sigmoid_derivative,
+    network=NeuralNetwork2([1,512,256,128,64,32,16,8,4,1],sigmoid,sigmoid_derivative,
+        distance_derivative,ouput_layer_func,ouput_layer_func_derivative)
 
     #训练集样本
-    x = np.array([np.linspace(-7, 7, 400)]).T
+    x = np.array([np.linspace(-7, 7, 200)]).T
     #训练集结果，由于使用了sigmoid作为激活函数，需保证其结果落在(0,1)区间内
-    y = (np.cos(x)+2)/4
+    y = np.cos(x)
 
     #使用随机梯度下降算法（SGD）对模型进行训练
     #迭代5000次；每次随机抽取40个样本作为一个batch；学习率设为0.1
     training_data=[(np.array([x_value]),np.array([y_value])) for x_value,y_value in zip(x,y)]
-    network.SGD(training_data,50000,40,0.1)
+    network.SGD(training_data,5000,40,0.1)
 
     #测试集样本
     x_test = np.array([np.linspace(-9, 9, 120)])

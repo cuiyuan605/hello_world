@@ -1,141 +1,166 @@
 #coding=utf-8
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import numpy as np
 import matplotlib.pylab as plt
 import random
+import math
 import tensorflow as tf
+import time
+
+class DataSet(object):
+    def __init__(self,input_data,output_data,batch_size):
+        assert len(input_data)==len(output_data)
+        assert len(input_data)%batch_size==0 and batch_size!=0
+        self._examples_num=len(input_data)
+        self._batch_size=batch_size
+        self._batch_idx=0
+        shuffle_batch_idxs=np.arange(self._examples_num)
+        np.random.shuffle(shuffle_batch_idxs)
+        self._input_data=input_data[shuffle_batch_idxs]
+        self._output_data=output_data[shuffle_batch_idxs]
+
+    @property
+    def batch_size(self):
+        return self._batch_size
+
+    def next_batch(self):
+        start=self._batch_idx*self._batch_size
+        end=(self._batch_idx+1)*self._batch_size
+        self._batch_idx=(self._batch_idx+1)%(self._examples_num//self._batch_size)
+        return  self._input_data[start:end], self._output_data[start:end]
 
 class NeuralNetworkTensorflow(object):
-    def __init__(self, sizes, act, act_derivative, cost_derivative,out_act,out_act_derivative):
+    def __init__(self, sizes):
         #sizes表示神经网络各层的神经元个数，第一层为输入层，最后一层为输出层
-        #act为神经元的激活函数
-        #act_derivative为激活函数的导数
-        #cost_derivative为损失函数的导数
-        self.num_layers = len(sizes)
-        self.sizes = sizes
-        self.biases = [np.random.randn(nueron_num, 1) for nueron_num in sizes[1:]]
-        self.weights = [np.random.randn(next_layer_nueron_num, nueron_num)
-            for nueron_num, next_layer_nueron_num in zip(sizes[:-1], sizes[1:])]
-        self.act=act
-        self.act_derivative=act_derivative
-        self.cost_derivative=cost_derivative
-        self.out_act=out_act
-        self.out_act_derivative=out_act_derivative
+        assert len(sizes)>1
+        self.layer_sizes=sizes
+        self._sess=None
+        self._input_placeholder=None
+        self._logits=None
+        #self.act_func=tf.nn.leaky_relu
+        self.act_func=tf.nn.tanh
 
-    #前向反馈（正向传播）
-    def feedforward(self, a):
-        #逐层计算神经元的激活值，公式(4)
-        for idx,(b, w) in enumerate(zip(self.biases, self.weights)):
-            if idx<len(self.biases)-1:
-                a = self.act(np.dot(w, a)+b)
+    def inference(self,input_placeholder):
+        active_values=input_placeholder
+        for size_idx in range(1,len(self.layer_sizes)):
+            last_layer_size=self.layer_sizes[size_idx-1]
+            current_layer_size=self.layer_sizes[size_idx]
+            if size_idx<len(self.layer_sizes)-1:
+                # Hidden
+                with tf.name_scope("hidden"+str(size_idx)):
+                    weights = tf.Variable(
+                        tf.truncated_normal([last_layer_size, current_layer_size],
+                                            stddev=1.0 / math.sqrt(float(last_layer_size))),
+                        name='weights')
+                    biases = tf.Variable(tf.zeros([current_layer_size]),
+                                         name='biases')
+                    active_values = self.act_func(tf.matmul(active_values, weights) + biases)
             else:
-                #输出层激活函数与其他层不同
-                a = self.out_act(np.dot(w, a)+b)
-        return a
+                # Linear
+                with tf.name_scope('softmax_linear'):
+                    weights = tf.Variable(
+                        tf.truncated_normal([last_layer_size, current_layer_size],
+                                            stddev=1.0 / math.sqrt(float(last_layer_size))),
+                        name='weights')
+                    biases = tf.Variable(tf.zeros([current_layer_size]),
+                                         name='biases')
+                    logits = tf.matmul(active_values, weights) + biases
+        return logits
 
-    #随机梯度下降算法
-    def SGD(self, training_data, epochs, batch_size, learning_rate):
-        #将训练样本training_data随机分为若干个长度为batch_size的batch
-        #使用各个batch的数据不断调整参数，学习率为learning_rate
-        #迭代epochs次
-        n = len(training_data)
-        for j in range(epochs):
-            random.shuffle(training_data)
-            batches = [training_data[k:k+batch_size] for k in range(0, n, batch_size)]
-            for batch in batches:
-                self.update_batch(batch, learning_rate)
-            print("Epoch {0} complete".format(j))
+    def loss(self,logits,output_placeholder):
+        if self.layer_sizes[-1]>1:
+            cross_entropy = tf.nn.softmax_cross_entropy_with_logits_v2(\
+                logits=logits, labels=output_placeholder, name='xentropy')
+            loss = tf.reduce_mean(cross_entropy, name='xentropy_mean')
+        else:
+            distance=tf.square(tf.subtract(logits,output_placeholder))
+            loss=tf.reduce_mean(distance)
+        return loss
 
-    def update_batch(self, batch, learning_rate):
-        #根据一个batch中的训练样本，调整各个参数值
-        nabla_b = [np.zeros(b.shape) for b in self.biases]
-        nabla_w = [np.zeros(w.shape) for w in self.weights]
-        for x, y in batch:
-            delta_nabla_b, delta_nabla_w = self.backprop(x, y)
-            nabla_b = [nb+dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
-            nabla_w = [nw+dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
-        #计算梯度，并调整各个参数值
-        self.weights = [w-(learning_rate/len(batch))*nw for w, nw in zip(self.weights, nabla_w)]
-        self.biases = [b-(learning_rate/len(batch))*nb for b, nb in zip(self.biases, nabla_b)]
+    #预测结果
+    def predict(self, input_data):
+        feed_dict={self._input_placeholder:input_data}
+        result=self._sess.run(self._logits,feed_dict=feed_dict)
+        return result
 
-    #反向传播
-    def backprop(self, x, y):
-        #保存b和w的偏导数值
-        nabla_b = [np.zeros(b.shape) for b in self.biases]
-        nabla_w = [np.zeros(w.shape) for w in self.weights]
-        #正向传播
-        activation = x
-        #保存每一层神经元的激活值
-        activations = [x]
-        #保存每一层神经元的z值
-        zs = []
-        for idx,(b, w) in enumerate(zip(self.biases, self.weights)):
-            z = np.dot(w, activation)+b
-            zs.append(z)
-            if idx<len(self.biases)-1:
-                activation = self.act(z)
-            else:
-                activation = self.out_act(z)
-            activations.append(activation)
-        #反向传播得到各个参数的偏导数值
-        #公式(13)
-        d = self.cost_derivative(activations[-1], y) * self.out_act_derivative(zs[-1])
-        #公式(17)
-        nabla_b[-1] = d
-        #公式(14)
-        nabla_w[-1] = np.dot(d, activations[-2].transpose())
-        #反向逐层计算
-        for l in range(2, self.num_layers):
-            z = zs[-l]
-            sp = self.act_derivative(z)
-            #公式(36)，反向逐层求参数偏导
-            d = np.dot(self.weights[-l+1].transpose(), d) * sp
-            #公式(38)
-            nabla_b[-l] = d
-            #公式(37)
-            nabla_w[-l] = np.dot(d, activations[-l-1].transpose())
-        return (nabla_b, nabla_w)
+    #训练模型
+    def train(self, training_data_sets, epochs, learning_rate):
+        with tf.Graph().as_default():
+            input_placeholder = tf.placeholder(tf.float32,
+                shape=(None, self.layer_sizes[0]))
+                #shape=(training_data_sets.train.batch_size, self.layer_sizes[0]))
+            self._input_placeholder=input_placeholder
 
-#距离函数的偏导数
-def distance_derivative(output_activations, y):
-    #损失函数的偏导数
-    return 2*(output_activations-y)
+            output_placeholder = tf.placeholder(tf.float32,
+                shape=(None, self.layer_sizes[-1]))
+                #shape=(training_data_sets.train.batch_size, self.layer_sizes[-1]))
 
-# sigmoid函数
-def sigmoid(z):
-    return 1.0/(1.0+np.exp(-z))
+            logits=self.inference(input_placeholder)
+            self._logits=logits
 
-# sigmoid函数的导数
-def sigmoid_derivative(z):
-    return sigmoid(z)*(1-sigmoid(z))
+            loss=self.loss(logits,output_placeholder)
 
-def ouput_layer_func(z):
-    return z
+            # Add a scalar summary for the snapshot loss.
+            #tf.summary.scalar(loss.op.name, loss)
+            # Create the gradient descent optimizer with the given learning rate.
+            optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+            # Create a variable to track the global step.
+            global_step = tf.Variable(0, name='global_step', trainable=False)
+            # Use the optimizer to apply the gradients that minimize the loss
+            # (and also increment the global step counter) as a single training step.
+            train_op = optimizer.minimize(loss, global_step=global_step)
 
-def ouput_layer_func_derivative(z):
-    return z-z+1
+            #sess=tf.Session()
+            init=tf.initialize_all_variables()
+            sess=tf.Session()
+            self._sess=sess
+            sess.run(init)
+            for epoch in range(epochs):
+                start_time=time.time()
+
+                input_data,output_data=training_data_sets.train.next_batch()
+                feed_dict={
+                    input_placeholder:input_data,
+                    output_placeholder:output_data
+                }
+                _,loss_value=sess.run([train_op,loss],feed_dict=feed_dict)
+
+                duration=time.time()-start_time
+
+                if epoch%100 == 99:
+                    print('Epoch %d: loss=%.2f (%.3f sec)'%(epoch+1,loss_value,duration))
+
+def get_data_sets(x,y,batch_size):
+    class DataSets(object):
+        def __init__(self):
+            pass
+    data_sets=DataSets()
+    train_data_set=DataSet(x,y,batch_size)
+    data_sets.train=train_data_set
+    return data_sets
 
 if __name__ == "__main__":
-    #创建一个5层的全连接神经网络，每层的神经元个数为1，8，5，3，1
     #其中第一层为输入层，最后一层为输出层
-    #network=NeuralNetwork2([1,32,16,8,4,1],sigmoid,sigmoid_derivative,
-    network=NeuralNetworkTensorflow([1,512,256,128,64,32,16,8,4,1],sigmoid,sigmoid_derivative,
-        distance_derivative,ouput_layer_func,ouput_layer_func_derivative)
+    network=NeuralNetworkTensorflow([1,512,256,128,64,32,16,8,4,1])
 
     #训练集样本
-    x = np.array([np.linspace(-7, 7, 200)]).T
-    #训练集结果，由于使用了sigmoid作为激活函数，需保证其结果落在(0,1)区间内
+    x = np.array([np.linspace(-7, 7, 400)]).T
+    #训练集结果
     y = np.cos(x)
 
-    #使用随机梯度下降算法（SGD）对模型进行训练
-    #迭代5000次；每次随机抽取40个样本作为一个batch；学习率设为0.1
-    training_data=[(np.array([x_value]),np.array([y_value])) for x_value,y_value in zip(x,y)]
-    network.SGD(training_data,5000,40,0.1)
+    training_data_sets=get_data_sets(x,y,100)
+
+    #迭代5000次；学习率设为0.02
+    network.train(training_data_sets,5000,0.02)
 
     #测试集样本
-    x_test = np.array([np.linspace(-9, 9, 120)])
+    x_test = np.array([np.linspace(-9, 9, 80)]).T
     #测试集结果
-    y_predict = network.feedforward(x_test)
+    y_predict = network.predict(x_test)
 
     #图示对比训练集和测试集数据
-    plt.plot(x,y,'r',x_test.T,y_predict.T,'*')
+    plt.plot(x,y,'r',x_test,y_predict,'*')
     plt.show()

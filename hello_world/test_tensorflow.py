@@ -29,6 +29,19 @@ feed_dict={logits:input_data,output:output_data}
 
 result=sess.run(logits,feed_dict=feed_dict)
 print("logits:",result)
+
+logits_sum=tf.expand_dims(tf.reduce_sum(logits,1),1)
+result=sess.run(logits_sum,feed_dict=feed_dict)
+print("logits_sum:",result)
+
+#logits_sum_reciprocal=tf.reciprocal(logits_sum)
+#result=sess.run(logits_sum_reciprocal,feed_dict=feed_dict)
+#print("logits_sum_reciprocal:",result)
+
+logits=logits/logits_sum
+result=sess.run(logits,feed_dict=feed_dict)
+print("div logits:",result)
+
 result=sess.run(output,feed_dict=feed_dict)
 print("output:",result)
 

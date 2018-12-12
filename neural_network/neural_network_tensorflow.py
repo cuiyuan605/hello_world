@@ -12,36 +12,63 @@ import time
 
 class DataSet(object):
     def __init__(self,input_data,output_data,batch_size):
-        assert len(input_data)==len(output_data)
-        assert len(input_data)%batch_size==0 and batch_size!=0
+        assert len(input_data)==len(output_data) and batch_size!=0
         self._examples_num=len(input_data)
         self._batch_size=batch_size
         self._batch_idx=0
-        shuffle_batch_idxs=np.arange(self._examples_num)
-        np.random.shuffle(shuffle_batch_idxs)
-        self._input_data=input_data[shuffle_batch_idxs]
-        self._output_data=output_data[shuffle_batch_idxs]
+        self._input_data=input_data
+        self._output_data=output_data
+        self._data_set_end=False
 
     @property
     def batch_size(self):
         return self._batch_size
 
+    @property
+    def data_set_end(self):
+        return self._data_set_end
+
+    def all_samples(self):
+        return self._input_data, self._output_data
+
     def next_batch(self):
+        if self._batch_idx==0:
+            self._data_set_end=False
         start=self._batch_idx*self._batch_size
-        end=(self._batch_idx+1)*self._batch_size
-        self._batch_idx=(self._batch_idx+1)%(self._examples_num//self._batch_size)
-        return  self._input_data[start:end], self._output_data[start:end]
+        end=min((self._batch_idx+1)*self._batch_size,self._examples_num)
+        self._batch_idx=(self._batch_idx+1)%(math.ceil(self._examples_num/self._batch_size))
+        if end==self._examples_num:
+            self._data_set_end=True
+        return self._input_data[start:end], self._output_data[start:end]
 
 class NeuralNetworkTensorflow(object):
-    def __init__(self, sizes):
+    def __init__(self, sizes,act_func="sigmoid",output_func=None):
         #sizes表示神经网络各层的神经元个数，第一层为输入层，最后一层为输出层
         assert len(sizes)>1
         self.layer_sizes=sizes
         self._sess=None
         self._input_placeholder=None
         self._logits=None
-        #self.act_func=tf.nn.leaky_relu
-        self.act_func=tf.nn.tanh
+
+        if act_func=="leaky_relu":
+            self._act_func=tf.nn.leaky_relu
+        elif act_func=="relu":
+            self._act_func=tf.nn.relu
+        elif act_func=="tanh":
+            self._act_func=tf.nn.tanh
+        else:
+            self._act_func=tf.nn.sigmoid
+
+        if output_func is None:
+            self._output_func=None
+        elif output_func=="relu":
+            self._output_func=tf.nn.relu
+        elif output_func=="leaky_relu":
+            self._output_func=tf.nn.leaky_relu
+        elif output_func=="tanh":
+            self._output_func=tf.nn.tanh
+        else:
+            self._output_func=tf.nn.sigmoid
 
     def inference(self,input_placeholder):
         active_values=input_placeholder
@@ -57,7 +84,7 @@ class NeuralNetworkTensorflow(object):
                         name='weights')
                     biases = tf.Variable(tf.zeros([current_layer_size]),
                                          name='biases')
-                    active_values = self.act_func(tf.matmul(active_values, weights) + biases)
+                    active_values = self._act_func(tf.matmul(active_values, weights) + biases)
             else:
                 # Linear
                 with tf.name_scope('softmax_linear'):
@@ -67,13 +94,18 @@ class NeuralNetworkTensorflow(object):
                         name='weights')
                     biases = tf.Variable(tf.zeros([current_layer_size]),
                                          name='biases')
-                    logits = tf.matmul(active_values, weights) + biases
+                    if self._output_func is None:
+                        logits = tf.matmul(active_values, weights) + biases
+                    else:
+                        logits = self._output_func(tf.matmul(active_values, weights) + biases)
         return logits
 
     def loss(self,logits,output_placeholder):
         if self.layer_sizes[-1]>1:
+            #labels_sum=tf.expand_dims(tf.reduce_sum(output_placeholder),1)
             cross_entropy = tf.nn.softmax_cross_entropy_with_logits_v2(\
                 logits=logits, labels=output_placeholder, name='xentropy')
+                #logits=logits, labels=output_placeholder/labels_sum, name='xentropy')
             loss = tf.reduce_mean(cross_entropy, name='xentropy_mean')
         else:
             distance=tf.square(tf.subtract(logits,output_placeholder))
@@ -86,8 +118,22 @@ class NeuralNetworkTensorflow(object):
         result=self._sess.run(self._logits,feed_dict=feed_dict)
         return result
 
+    #评估模型
+    def evaluate(self,test_data_set,evaluate_func):
+        if evaluate_func is None:
+            return
+        output_result_batch=[]
+        while True:
+            input_data,output_data=test_data_set.next_batch()
+            feed_dict={self._input_placeholder:input_data}
+            result=self._sess.run(self._logits,feed_dict=feed_dict)
+            output_result_batch.append((result,output_data))
+            if test_data_set.data_set_end:
+                break
+        evaluate_func(output_result_batch)
+
     #训练模型
-    def train(self, training_data_sets, epochs, learning_rate):
+    def train(self, training_data_sets, epochs, learning_rate,evaluate_func=None):
         with tf.Graph().as_default():
             input_placeholder = tf.placeholder(tf.float32,
                 shape=(None, self.layer_sizes[0]))
@@ -131,25 +177,34 @@ class NeuralNetworkTensorflow(object):
                 duration=time.time()-start_time
 
                 if epoch%100 == 99:
-                    print('Epoch %d: loss=%.2f (%.3f sec)'%(epoch+1,loss_value,duration))
+                    print('Epoch %d: loss=%.3f (%.3f sec)'%(epoch+1,loss_value,duration))
+                    self.evaluate(training_data_sets.test,evaluate_func)
 
 def get_data_sets(x,y,batch_size):
     class DataSets(object):
         def __init__(self):
             pass
     data_sets=DataSets()
-    train_data_set=DataSet(x,y,batch_size)
+    sample_num=len(x)
+    assert sample_num==len(y)
+    shuffle_batch_idxs=np.arange(sample_num)
+    np.random.shuffle(shuffle_batch_idxs)
+    input_data=x[shuffle_batch_idxs]
+    output_data=y[shuffle_batch_idxs]
+    train_data_set=DataSet(input_data[:int(sample_num*0.9)],output_data[:int(sample_num*0.9)],batch_size)
     data_sets.train=train_data_set
+    test_data_set=DataSet(input_data[int(sample_num*0.9):],output_data[int(sample_num*0.9):],batch_size)
+    data_sets.test=test_data_set
     return data_sets
 
 if __name__ == "__main__":
     #其中第一层为输入层，最后一层为输出层
-    network=NeuralNetworkTensorflow([1,512,256,128,64,32,16,8,4,1])
+    network=NeuralNetworkTensorflow([1,512,256,128,64,32,16,8,4,1],act_func="tanh")
 
     #训练集样本
-    x = np.array([np.linspace(-7, 7, 400)]).T
+    x = np.array([np.linspace(-7, 7, 500)]).T
     #训练集结果
-    y = np.cos(x)
+    y = np.cos(x)*2
 
     training_data_sets=get_data_sets(x,y,100)
 
@@ -157,7 +212,7 @@ if __name__ == "__main__":
     network.train(training_data_sets,5000,0.02)
 
     #测试集样本
-    x_test = np.array([np.linspace(-9, 9, 80)]).T
+    x_test = np.array([np.linspace(-12, 12, 150)]).T
     #测试集结果
     y_predict = network.predict(x_test)
 

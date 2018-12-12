@@ -102,10 +102,8 @@ class NeuralNetworkTensorflow(object):
 
     def loss(self,logits,output_placeholder):
         if self.layer_sizes[-1]>1:
-            #labels_sum=tf.expand_dims(tf.reduce_sum(output_placeholder),1)
             cross_entropy = tf.nn.softmax_cross_entropy_with_logits_v2(\
                 logits=logits, labels=output_placeholder, name='xentropy')
-                #logits=logits, labels=output_placeholder/labels_sum, name='xentropy')
             loss = tf.reduce_mean(cross_entropy, name='xentropy_mean')
         else:
             distance=tf.square(tf.subtract(logits,output_placeholder))
@@ -137,12 +135,10 @@ class NeuralNetworkTensorflow(object):
         with tf.Graph().as_default():
             input_placeholder = tf.placeholder(tf.float32,
                 shape=(None, self.layer_sizes[0]))
-                #shape=(training_data_sets.train.batch_size, self.layer_sizes[0]))
             self._input_placeholder=input_placeholder
 
             output_placeholder = tf.placeholder(tf.float32,
                 shape=(None, self.layer_sizes[-1]))
-                #shape=(training_data_sets.train.batch_size, self.layer_sizes[-1]))
 
             logits=self.inference(input_placeholder)
             self._logits=logits

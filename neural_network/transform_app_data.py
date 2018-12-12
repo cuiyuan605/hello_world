@@ -9,7 +9,7 @@ import jieba
 import os
 import pickle
 
-from neural_network_tensorflow import DataSet,NeuralNetworkTensorflow,get_data_sets
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -218,71 +218,31 @@ def convert_to_train_data(click_data,news_title_class):
 
     return np.array(train_input_data),np.array(train_output_data)
 
-def train_model(train_data_x,train_data_y):
-    #其中第一层为输入层，最后一层为输出层
-    network=NeuralNetworkTensorflow([28,1024,512,1024,256,5],\
-        act_func="leaky_relu",output_func="relu")
-
-    training_data_sets=get_data_sets(train_data_x,train_data_y,4096)
-
-    #迭代2000次；学习率设为0.01
-    with tf.device('/gpu:0'):
-        network.train(training_data_sets,2000,0.01,evaluate_func=eva_func)
-
-def eva_func(result_batch):
-    positive_false=0
-    positive_num=0
-    negetive_false=0
-    negetive_num=0
-    for result,output_data in result_batch:
-        for sample_idx,result_sample in enumerate(result):
-            result_max_idx=np.argmax(result_sample)
-            output_sample=output_data[sample_idx]
-            output_max_idx=np.argmax(output_sample)
-            if output_max_idx==4:
-                negetive_num+=1
-                if result_max_idx!=output_max_idx:
-                    negetive_false+=1
-            else:
-                if output_sample[output_max_idx]==1:
-                    positive_num+=1
-                    if result_max_idx!=output_max_idx and output_sample[result_max_idx]!=1:
-                        positive_false+=1
-    print("positive_false=%d/%d=%.5f negetive_false=%d/%d=%.5f"\
-        %(positive_false,positive_num,positive_false/positive_num,\
-        negetive_false,negetive_num,negetive_false/negetive_num))
-
 def main(args):
     train_data_x_pkl_file=os.path.join(os.getcwd(),"x.pkl")
     train_data_y_pkl_file=os.path.join(os.getcwd(),"y.pkl")
-    train_data_x=None
-    train_data_y=None
-    if not os.path.exists(train_data_x_pkl_file) or not os.path.exists(train_data_y_pkl_file):
-        #获取用户点击新闻的title数据
-        click_data,news_title=get_user_click_data(args.data_path)
 
-        #根据title获取新闻的分类
-        all_classes=title2class(news_title,args.model_dir)
+    if os.path.exists(train_data_x_pkl_file):
+        os.remove(train_data_x_pkl_file)
+    if os.path.exists(train_data_y_pkl_file):
+        os.remove(train_data_y_pkl_file)
 
-        assert len(news_title)==len(all_classes)
+    #获取用户点击新闻的title数据
+    click_data,news_title=get_user_click_data(args.data_path)
 
-        train_data_x,train_data_y=convert_to_train_data(click_data,all_classes)
+    #根据title获取新闻的分类
+    all_classes=title2class(news_title,args.model_dir)
 
-        with open(train_data_x_pkl_file, 'wb') as f:
-            pickle.dump(train_data_x, f)
-            print("write pkl:",train_data_x_pkl_file)
-        with open(train_data_y_pkl_file, 'wb') as f:
-            pickle.dump(train_data_y, f)
-            print("write pkl:",train_data_y_pkl_file)
-    else:
-        with open(train_data_x_pkl_file, 'rb') as f:
-            train_data_x = pickle.load(f)
-            print("read pkl:",train_data_x_pkl_file)
-        with open(train_data_y_pkl_file, 'rb') as f:
-            train_data_y = pickle.load(f)
-            print("read pkl:",train_data_y_pkl_file)
+    assert len(news_title)==len(all_classes)
 
-    train_model(train_data_x,train_data_y)
+    train_data_x,train_data_y=convert_to_train_data(click_data,all_classes)
+
+    with open(train_data_x_pkl_file, 'wb') as f:
+        pickle.dump(train_data_x, f)
+        print("write pkl:",train_data_x_pkl_file)
+    with open(train_data_y_pkl_file, 'wb') as f:
+        pickle.dump(train_data_y, f)
+        print("write pkl:",train_data_y_pkl_file)
 
 
 if __name__ == '__main__':
